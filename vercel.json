@@ -1,0 +1,20 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "regions": ["sin1"],
+  "installCommand": "pnpm install",
+  "buildCommand": "pnpm build",
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "onlineteacher.bookln.cn" }],
+      "destination": "https://www.onlineteacher.bookln.cn/:path*",
+      "permanent": true
+    }
+  ],
+  "functions": {
+    "app/api/**/*.ts": {
+      "maxDuration": 300
+    }
+  }
+}
