@@ -51,8 +51,10 @@ export async function middleware(request: NextRequest) {
   forwardedHeaders.delete(VERIFIED_USER_ID_HEADER);
   const nextResponse = () => NextResponse.next({ request: { headers: forwardedHeaders } });
   let response = nextResponse();
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  // CloudBase provides service variables at container runtime. Dynamic access
+  // prevents Next.js from replacing NEXT_PUBLIC_* with build-time empties.
+  const supabaseUrl = process.env['NEXT_PUBLIC_SUPABASE_URL'];
+  const supabaseAnonKey = process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'];
   const accessCode = process.env.ACCESS_CODE;
 
   // Public interactive classrooms use a single-response viewer. Rewriting at

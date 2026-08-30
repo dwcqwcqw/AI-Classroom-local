@@ -11,6 +11,10 @@ export type PersistencePrincipal = RuntimeHttpPrincipal &
 
 let serverClient: SupabaseClient | undefined;
 
+function runtimeEnv(name: string): string | undefined {
+  return process.env[name];
+}
+
 function singleHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -22,8 +26,8 @@ function bearerToken(authorization: string | undefined): string | undefined {
 }
 
 function getServerClient(): SupabaseClient | undefined {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = runtimeEnv('NEXT_PUBLIC_SUPABASE_URL');
+  const anonKey = runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
   if (!url || !anonKey) return undefined;
   return (serverClient ??= createClient(url, anonKey, {
     auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
@@ -65,7 +69,7 @@ async function authenticatePersistenceCredentials(
 
 export function isPersistenceAuthConfigured(): boolean {
   return Boolean(
-    (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) ||
+    (runtimeEnv('NEXT_PUBLIC_SUPABASE_URL') && runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY')) ||
     process.env.PERSISTENCE_DEV_TOKEN,
   );
 }

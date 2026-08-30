@@ -27,9 +27,10 @@ let learnerKeyPromise: Promise<string> | undefined;
 let authSessionPromise: Promise<AuthSessionResponse> | undefined;
 
 function getCachedAuthSession(): Promise<AuthSessionResponse> {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-    return Promise.resolve({ configured: false, user: null });
-  }
+  const authProxyEnabled =
+    process.env.NEXT_PUBLIC_AUTH_PROXY === '1' ||
+    Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  if (!authProxyEnabled) return Promise.resolve({ configured: false, user: null });
   return (authSessionPromise ??= getAuthSession().catch((error) => {
     authSessionPromise = undefined;
     throw error;

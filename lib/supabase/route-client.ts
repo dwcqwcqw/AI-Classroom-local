@@ -7,13 +7,20 @@ export interface PendingCookie {
   options: CookieOptions;
 }
 
+// NEXT_PUBLIC_* values are normally folded into the Next.js bundle at build
+// time. CloudBase injects service variables when the container starts, so use
+// dynamic lookup in server-only code to preserve runtime configuration.
+function runtimeEnv(name: string): string | undefined {
+  return process.env[name];
+}
+
 export function isServerAuthConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+  return Boolean(runtimeEnv('NEXT_PUBLIC_SUPABASE_URL') && runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'));
 }
 
 export function createSupabaseRouteClient(request: NextRequest, pendingCookies: PendingCookie[]) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url = runtimeEnv('NEXT_PUBLIC_SUPABASE_URL');
+  const anonKey = runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
   if (!url || !anonKey) return undefined;
 
   return createServerClient(url, anonKey, {
