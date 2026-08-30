@@ -53,8 +53,9 @@ export async function middleware(request: NextRequest) {
   let response = nextResponse();
   // CloudBase provides service variables at container runtime. Dynamic access
   // prevents Next.js from replacing NEXT_PUBLIC_* with build-time empties.
-  const supabaseUrl = process.env['NEXT_PUBLIC_SUPABASE_URL'];
-  const supabaseAnonKey = process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'];
+  const supabaseUrl = process.env.SUPABASE_URL ?? process.env['NEXT_PUBLIC_SUPABASE_URL'];
+  const supabaseAnonKey =
+    process.env.SUPABASE_ANON_KEY ?? process.env['NEXT_PUBLIC_SUPABASE_ANON_KEY'];
   const accessCode = process.env.ACCESS_CODE;
 
   // Public interactive classrooms use a single-response viewer. Rewriting at

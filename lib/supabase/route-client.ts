@@ -14,13 +14,20 @@ function runtimeEnv(name: string): string | undefined {
   return process.env[name];
 }
 
+function supabaseRuntimeConfig() {
+  return {
+    url: runtimeEnv('SUPABASE_URL') ?? runtimeEnv('NEXT_PUBLIC_SUPABASE_URL'),
+    anonKey: runtimeEnv('SUPABASE_ANON_KEY') ?? runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+  };
+}
+
 export function isServerAuthConfigured(): boolean {
-  return Boolean(runtimeEnv('NEXT_PUBLIC_SUPABASE_URL') && runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'));
+  const { url, anonKey } = supabaseRuntimeConfig();
+  return Boolean(url && anonKey);
 }
 
 export function createSupabaseRouteClient(request: NextRequest, pendingCookies: PendingCookie[]) {
-  const url = runtimeEnv('NEXT_PUBLIC_SUPABASE_URL');
-  const anonKey = runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  const { url, anonKey } = supabaseRuntimeConfig();
   if (!url || !anonKey) return undefined;
 
   return createServerClient(url, anonKey, {

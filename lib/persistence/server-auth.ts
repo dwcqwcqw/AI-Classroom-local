@@ -15,6 +15,13 @@ function runtimeEnv(name: string): string | undefined {
   return process.env[name];
 }
 
+function supabaseRuntimeConfig() {
+  return {
+    url: runtimeEnv('SUPABASE_URL') ?? runtimeEnv('NEXT_PUBLIC_SUPABASE_URL'),
+    anonKey: runtimeEnv('SUPABASE_ANON_KEY') ?? runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+  };
+}
+
 function singleHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
@@ -26,8 +33,7 @@ function bearerToken(authorization: string | undefined): string | undefined {
 }
 
 function getServerClient(): SupabaseClient | undefined {
-  const url = runtimeEnv('NEXT_PUBLIC_SUPABASE_URL');
-  const anonKey = runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  const { url, anonKey } = supabaseRuntimeConfig();
   if (!url || !anonKey) return undefined;
   return (serverClient ??= createClient(url, anonKey, {
     auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
@@ -68,9 +74,9 @@ async function authenticatePersistenceCredentials(
 }
 
 export function isPersistenceAuthConfigured(): boolean {
+  const { url, anonKey } = supabaseRuntimeConfig();
   return Boolean(
-    (runtimeEnv('NEXT_PUBLIC_SUPABASE_URL') && runtimeEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY')) ||
-    process.env.PERSISTENCE_DEV_TOKEN,
+    (url && anonKey) || process.env.PERSISTENCE_DEV_TOKEN,
   );
 }
 
