@@ -7,7 +7,7 @@ import '@/lib/i18n/config';
 
 const LOCALE_STORAGE_KEY = 'locale';
 
-/** Match a browser language code (e.g. 'en', 'zh-TW') to a supported locale */
+/** Match a stored language code (e.g. 'en', 'zh-TW') to a supported locale. */
 function resolveLocale(lang: string): Locale {
   // Exact match
   const exact = supportedLocales.find((l) => l.code === lang);
@@ -31,19 +31,22 @@ export function I18nProvider({ children }: { children: ReactNode }) {
 
   const locale = (i18n.language || defaultLocale) as Locale;
 
-  // Detect language after hydration to avoid SSR mismatch.
-  // i18next handles fallback automatically: if the detected language
-  // has no matching JSON file, it falls back to fallbackLng.
+  // Apply an explicit saved preference after hydration. New users always start
+  // in Simplified Chinese instead of inheriting the browser/OS language.
   useEffect(() => {
     try {
       const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
-      const raw = stored || navigator.language || defaultLocale;
+      const raw = stored || defaultLocale;
       const target = resolveLocale(raw);
       if (target !== i18n.language) i18n.changeLanguage(target);
     } catch {
       // localStorage unavailable, keep default
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
 
   const setLocale = (newLocale: Locale) => {
     i18n.changeLanguage(newLocale);
