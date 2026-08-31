@@ -151,8 +151,12 @@ describe('classroom scene generation retries', () => {
       inferFocusedPageType,
       focusedInteractiveImplementationHint,
       focusedMobileImplementationHint,
+      isSceneContentTimeout,
       requestsSingleSlide,
+      SCENE_CONTENT_BUDGET_MS,
+      SCENE_CONTENT_RECOVERY_BUDGET_MS,
       SCENE_CONTENT_TRANSIENT_MAX_RETRIES,
+      SCENE_GENERATION_BUDGET_MS,
       sceneOutputTokenBudget,
     } = await import('@/lib/server/classroom-generation');
 
@@ -170,6 +174,16 @@ describe('classroom scene generation retries', () => {
     expect(sceneOutputTokenBudget('interactive')).toBe(5_500);
     expect(sceneOutputTokenBudget('interactive', true)).toBe(4_800);
     expect(SCENE_CONTENT_TRANSIENT_MAX_RETRIES).toBe(5);
+    expect(SCENE_CONTENT_BUDGET_MS).toBe(110_000);
+    expect(SCENE_CONTENT_RECOVERY_BUDGET_MS).toBe(100_000);
+    expect(SCENE_GENERATION_BUDGET_MS).toBe(240_000);
+    expect(
+      isSceneContentTimeout(Object.assign(new Error('expired'), { name: 'TimeoutError' })),
+    ).toBe(true);
+    expect(isSceneContentTimeout(new Error('Connect Timeout Error'))).toBe(true);
+    expect(isSceneContentTimeout(Object.assign(new Error('Unauthorized'), { name: 'Error' }))).toBe(
+      false,
+    );
     expect(requestsSingleSlide('只生成一页PPT，介绍牛顿第二定律')).toBe(true);
     expect(requestsSingleSlide('Create a single slide about gravity')).toBe(true);
     expect(requestsSingleSlide('Create a ten-page course')).toBe(false);
@@ -314,6 +328,61 @@ describe('classroom scene generation retries', () => {
       expect.objectContaining({ mode: 'disabled', enabled: false }),
     );
     expect(mocks.callLLM.mock.calls.at(-1)?.[3]).toHaveProperty('effort', undefined);
+  });
+
+  it('recovers a focused interactive page after the first model request times out', async () => {
+    const html =
+      '<!doctype html><html><body><canvas id="c"></canvas><script>document.getElementById("c").getContext("2d").fillRect(0,0,20,20)</script></body></html>';
+    mocks.callLLM
+      .mockRejectedValueOnce(
+        Object.assign(new Error('upstream request timed out'), { name: 'TimeoutError' }),
+      )
+      .mockResolvedValueOnce({ text: html, finishReason: 'stop' });
+    mocks.generateSceneContent.mockImplementation(async (_outline, aiCall) => ({
+      html: await aiCall('legacy system', 'legacy user'),
+    }));
+    mocks.createSceneWithActions.mockImplementation((sceneOutline, content, actions, api) => {
+      const sceneResult = api.scene.create({
+        type: 'interactive',
+        title: sceneOutline.title,
+        order: sceneOutline.order,
+        content: { type: 'interactive', url: '', html: content.html },
+        actions,
+      });
+      return sceneResult.success ? (sceneResult.data ?? null) : null;
+    });
+
+    const { generateClassroom } = await import('@/lib/server/classroom-generation');
+    const result = await generateClassroom(
+      { requirement: '生成一页相对论时间膨胀的互动模拟', pageType: 'simulation' },
+      { baseUrl: 'http://localhost' },
+    );
+
+    expect(result.scenesCount).toBe(1);
+    expect(mocks.callLLM).toHaveBeenCalledTimes(2);
+    expect(mocks.callLLM.mock.calls[1]?.[0]?.messages?.[1]?.content).toContain(
+      'previous provider request timed out',
+    );
+  });
+
+  it('preserves the focused scene root cause when every scene fails', async () => {
+    mocks.generateSceneContent.mockImplementation(async (_outline, aiCall) => {
+      await aiCall('legacy system', 'legacy user');
+      return null;
+    });
+    mocks.callLLM.mockRejectedValue(
+      Object.assign(new Error('APIHub rejected the configured model'), { statusCode: 400 }),
+    );
+
+    const { generateClassroom } = await import('@/lib/server/classroom-generation');
+    await expect(
+      generateClassroom(
+        { requirement: '生成一页相对论时间膨胀的互动模拟', pageType: 'simulation' },
+        { baseUrl: 'http://localhost' },
+      ),
+    ).rejects.toThrow(
+      'No scenes were generated. Scene 1/1 "生成一页相对论时间膨胀的互动模拟": APIHub rejected the configured model',
+    );
   });
 
   it('does not launch a second long upstream scene request', async () => {

@@ -53,8 +53,9 @@ export const SCENE_GENERATION_TARGET_MS = 30_000;
 // regeneration when the gateway reports a truncated response: publishing a
 // half-written canvas is worse than taking another minute to return a working
 // lesson. Each individual upstream call is still capped below.
-export const SCENE_GENERATION_BUDGET_MS = 135_000;
-export const SCENE_CONTENT_BUDGET_MS = 65_000;
+export const SCENE_GENERATION_BUDGET_MS = 240_000;
+export const SCENE_CONTENT_BUDGET_MS = 110_000;
+export const SCENE_CONTENT_RECOVERY_BUDGET_MS = 100_000;
 export const SCENE_CONTENT_TRANSIENT_MAX_RETRIES = 5;
 const MIN_ACTION_BUDGET_MS = 1_000;
 
@@ -157,6 +158,28 @@ export function focusedInteractiveResponseDefects(html: string, finishReason?: s
 
 function remainingBudgetMs(deadlineAt: number, ceilingMs: number): number {
   return Math.max(1, Math.min(ceilingMs, deadlineAt - Date.now()));
+}
+
+/**
+ * callLLM may surface an internally-created AbortSignal timeout as either a
+ * DOM TimeoutError/AbortError or an upstream gateway timeout. This helper is
+ * intentionally used only for our own scene-content signal; caller-driven
+ * cancellation must not be retried globally.
+ */
+export function isSceneContentTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const name = error.name.toLowerCase();
+  const message = error.message.toLowerCase();
+  return (
+    name === 'timeouterror' ||
+    name === 'aborterror' ||
+    /(?:connect\s+timeout|timed?\s*out|timeout|aborted due to timeout)/i.test(message)
+  );
+}
+
+function conciseGenerationError(error: unknown, maxLength = 220): string {
+  const raw = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, ' ').trim();
+  return raw.length > maxLength ? `${raw.slice(0, maxLength - 1)}…` : raw;
 }
 
 function generationFastThinkingConfig(thinking: ThinkingConfig | undefined): ThinkingConfig {
@@ -694,7 +717,10 @@ export async function generateClassroom(
           focusedSinglePage && outlineType === 'interactive'
             ? `Brief:\n${requirement}\n\nWidget type: ${focusedPageType ?? 'interactive'}. Implement only the requested learning interaction and essential controls.${focusedInteractiveImplementationHint(requirement)}${focusedMobileImplementationHint(focusedPageType)}`
             : userPrompt;
-        const callFocusedModel = (messages: Array<{ role: 'system' | 'user'; content: string }>) =>
+        const callFocusedModel = (
+          messages: Array<{ role: 'system' | 'user'; content: string }>,
+          ceilingMs = SCENE_CONTENT_BUDGET_MS,
+        ) =>
           callLLM(
             {
               model,
@@ -707,29 +733,55 @@ export async function generateClassroom(
                 sceneOutputTokenBudget(outlineType, focusedSinglePage),
               ),
               maxRetries: 0,
-              abortSignal: AbortSignal.timeout(
-                remainingBudgetMs(deadlineAt, SCENE_CONTENT_BUDGET_MS),
-              ),
+              abortSignal: AbortSignal.timeout(remainingBudgetMs(deadlineAt, ceilingMs)),
             },
             'generate-classroom-scene',
             undefined,
             generationFastThinkingConfig(callThinking),
           );
-        let result = await callFocusedModel([
+        const initialMessages: Array<{ role: 'system' | 'user'; content: string }> = [
           { role: 'system', content: effectiveSystemPrompt },
           { role: 'user', content: effectiveUserPrompt },
-        ]);
+        ];
+        let result;
+        try {
+          result = await callFocusedModel(initialMessages);
+        } catch (error) {
+          const canRecover =
+            focusedSinglePage &&
+            outlineType === 'interactive' &&
+            isSceneContentTimeout(error) &&
+            deadlineAt - Date.now() > 5_000;
+          if (!canRecover) throw error;
+
+          log.warn(
+            `Focused interactive content timed out; retrying once with a compact recovery prompt: ${conciseGenerationError(error)}`,
+          );
+          result = await callFocusedModel(
+            [
+              { role: 'system', content: effectiveSystemPrompt },
+              {
+                role: 'user',
+                content: `${effectiveUserPrompt}\n\nThe previous provider request timed out. Produce a simpler but fully working version now. Keep the complete HTML under 4,000 characters, use no external libraries or image requests, and prioritize the requested interaction, initial render, mobile controls, and closing tags over decoration.`,
+              },
+            ],
+            SCENE_CONTENT_RECOVERY_BUDGET_MS,
+          );
+        }
         if (focusedSinglePage && outlineType === 'interactive') {
           const defects = focusedInteractiveResponseDefects(result.text, result.finishReason);
           if (defects.length > 0) {
             log.warn(`Focused interactive runtime smoke check failed: ${defects.join('; ')}`);
-            result = await callFocusedModel([
-              { role: 'system', content: effectiveSystemPrompt },
-              {
-                role: 'user',
-                content: `${effectiveUserPrompt}\n\nRegenerate from scratch and keep the entire document under 4,500 characters. The previous attempt failed this runtime smoke check: ${defects.join('; ')}. Verify the initial draw runs automatically, all primary buttons have working handlers, every canvas coordinate is finite, and </script></body></html> are present.`,
-              },
-            ]);
+            result = await callFocusedModel(
+              [
+                { role: 'system', content: effectiveSystemPrompt },
+                {
+                  role: 'user',
+                  content: `${effectiveUserPrompt}\n\nRegenerate from scratch and keep the entire document under 4,500 characters. The previous attempt failed this runtime smoke check: ${defects.join('; ')}. Verify the initial draw runs automatically, all primary buttons have working handlers, every canvas coordinate is finite, and </script></body></html> are present.`,
+                },
+              ],
+              SCENE_CONTENT_RECOVERY_BUDGET_MS,
+            );
 
             const retryDefects = focusedInteractiveResponseDefects(
               result.text,
@@ -998,6 +1050,7 @@ export async function generateClassroom(
 
   log.info('Stage 2: Generating scene content and actions...');
   let generatedScenes = 0;
+  const sceneFailures: string[] = [];
 
   for (const [index, outline] of outlines.entries()) {
     const sceneStartedAt = Date.now();
@@ -1086,6 +1139,7 @@ export async function generateClassroom(
           if (error instanceof PBLGenerationError) {
             return containPBLGenerationError(error, safeOutline.title);
           }
+          if (focusedSinglePage) throw error;
           log.warn(
             `Scene "${safeOutline.title}" content generation failed inside the page budget; using fallback: ${error instanceof Error ? error.message : String(error)}`,
           );
@@ -1167,13 +1221,15 @@ export async function generateClassroom(
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const failure = `Scene ${index + 1}/${outlines.length} "${safeOutline.title}": ${conciseGenerationError(error)}`;
+      sceneFailures.push(failure);
       log.warn(
         `Skipping scene ${index + 1}/${outlines.length} "${safeOutline.title}" after isolated failure: ${message}`,
       );
       await options.onProgress?.({
         step: 'generating_scenes',
         progress: Math.min(30 + Math.floor(((index + 1) / Math.max(outlines.length, 1)) * 60), 90),
-        message: `Skipped failed scene ${index + 1}/${outlines.length}; continuing`,
+        message: `Skipped failed scene ${index + 1}/${outlines.length}; ${conciseGenerationError(error, 140)}`,
         scenesGenerated: generatedScenes,
         totalScenes: outlines.length,
       });
@@ -1184,7 +1240,11 @@ export async function generateClassroom(
   log.info(`Pipeline complete: ${scenes.length} scenes generated`);
 
   if (scenes.length === 0) {
-    throw new Error('No scenes were generated');
+    throw new Error(
+      sceneFailures.length > 0
+        ? `No scenes were generated. ${sceneFailures.join(' | ')}`
+        : 'No scenes were generated. Scene creation returned no persisted output.',
+    );
   }
 
   // Enhancement phase: media and narration consume independent providers and
