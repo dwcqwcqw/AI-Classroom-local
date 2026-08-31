@@ -1,6 +1,10 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { BRAND_MARK_PATH, BRAND_NAME } from '@/lib/brand';
-import { isValidClassroomId, readClassroom } from '@/lib/server/classroom-storage';
+import {
+  buildRequestOrigin,
+  isValidClassroomId,
+  readClassroom,
+} from '@/lib/server/classroom-storage';
 import { patchHtmlForIframe } from '@/lib/utils/iframe';
 
 export const runtime = 'nodejs';
@@ -46,7 +50,7 @@ function htmlResponse(html: string, status = 200): NextResponse {
 }
 
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { readonly params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
@@ -72,7 +76,13 @@ export async function GET(
     ];
   });
   if (pages.length !== classroom.scenes.length) {
-    const fallback = new URL(`/classroom/${encodeURIComponent(id)}`, request.url);
+    // CloudBase reaches the container through its internal 0.0.0.0:3000
+    // listener. Never expose that origin in a public redirect; use the same
+    // canonical origin resolver as MCP and generation responses.
+    const fallback = new URL(
+      `/classroom/${encodeURIComponent(id)}`,
+      buildRequestOrigin(request),
+    );
     fallback.searchParams.set('full', '1');
     return NextResponse.redirect(fallback, 307);
   }
