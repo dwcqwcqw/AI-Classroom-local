@@ -30,6 +30,15 @@ export async function writeJsonFileAtomic(filePath: string, data: unknown) {
 }
 
 export function buildRequestOrigin(req: NextRequest): string {
+  const publicSiteUrl = process.env.PUBLIC_SITE_URL?.trim();
+  if (publicSiteUrl) {
+    try {
+      return new URL(publicSiteUrl).origin;
+    } catch {
+      // Fall back to request headers when the optional deployment setting is invalid.
+    }
+  }
+
   return req.headers.get('x-forwarded-host')
     ? `${req.headers.get('x-forwarded-proto') || 'http'}://${req.headers.get('x-forwarded-host')}`
     : req.nextUrl.origin;

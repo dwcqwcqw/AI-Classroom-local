@@ -2,6 +2,7 @@ import { after, type NextRequest } from 'next/server';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { authenticateMcpRequest } from '@/lib/server/mcp-auth';
 import { createCloudLadderMcpServer } from '@/lib/server/mcp-server';
+import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,13 +42,6 @@ function unauthorized(): Response {
   );
 }
 
-function requestOrigin(request: NextRequest): string {
-  const forwardedHost = request.headers.get('x-forwarded-host');
-  return forwardedHost
-    ? `${request.headers.get('x-forwarded-proto') || 'https'}://${forwardedHost}`
-    : request.nextUrl.origin;
-}
-
 async function handleMcpRequest(request: NextRequest): Promise<Response> {
   const principal = await authenticateMcpRequest(request);
   if (!principal) return unauthorized();
@@ -58,7 +52,7 @@ async function handleMcpRequest(request: NextRequest): Promise<Response> {
   });
   const server = createCloudLadderMcpServer({
     principal,
-    baseUrl: requestOrigin(request),
+    baseUrl: buildRequestOrigin(request),
     schedule: (work) => after(work),
   });
 
