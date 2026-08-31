@@ -3,8 +3,12 @@
 # ---- Stage 1: Base ----
 FROM node:22-alpine AS base
 
-ARG ALPINE_MIRROR=""
-ARG NPM_REGISTRY=""
+# CloudBase builds run in mainland China and enforce a short image-build
+# window. Default to Tencent's mirrors so apk/corepack/pnpm do not spend most
+# of that window crossing the public internet. Operators can still override
+# either value with Docker build args on other platforms.
+ARG ALPINE_MIRROR="mirrors.cloud.tencent.com"
+ARG NPM_REGISTRY="https://mirrors.cloud.tencent.com/npm/"
 
 RUN if [ -n "$ALPINE_MIRROR" ]; then \
       sed -i "s|dl-cdn.alpinelinux.org|$ALPINE_MIRROR|g" /etc/apk/repositories; \
@@ -26,7 +30,7 @@ WORKDIR /app
 # ---- Stage 2: Dependencies ----
 FROM base AS deps
 
-ARG NPM_REGISTRY
+ARG NPM_REGISTRY="https://mirrors.cloud.tencent.com/npm/"
 
 # Native build tools for sharp, @napi-rs/canvas
 RUN apk add --no-cache python3 build-base g++ cairo-dev pango-dev jpeg-dev giflib-dev librsvg-dev
@@ -87,7 +91,7 @@ RUN pnpm build
 # ---- Stage 4: Runner ----
 FROM node:22-alpine AS runner
 
-ARG ALPINE_MIRROR=""
+ARG ALPINE_MIRROR="mirrors.cloud.tencent.com"
 
 WORKDIR /app
 
